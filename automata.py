@@ -30,15 +30,14 @@ class Automata:
         """Genera un nuevo ID único para estados"""
         self.state_counter += 1
         return self.state_counter
-    
-    # 🔹 Agregar concatenaciones explícitas
+
     def add_concatenation_symbols(self, regex):
         """Inserta el operador '.' de concatenación explícita en la regex"""
         result = ""
         prev = None
         for c in regex:
             if prev:
-                # Si prev fue símbolo, ) o * + ?, y c es símbolo o (
+                
                 if ((prev.isalnum() or prev in {')', '*', '+', '?'}) and 
                     (c.isalnum() or c == '(')):
                     result += '.'
