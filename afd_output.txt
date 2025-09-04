@@ -1,0 +1,5 @@
+ESTADOS = {1, 2, 3}
+SIMBOLOS = {a, b}
+INICIO = {1}
+ACEPTACION = {1, 2, 3}
+TRANSICIONES = {(1, a, 2), (2, a, 2), (2, b, 3), (3, a, 2)}
