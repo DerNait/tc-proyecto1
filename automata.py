@@ -234,7 +234,6 @@ class Automata:
     
     def regex_to_afn(self, expression):
         postfix = self.regex_to_postfix(expression)
-        print(f"Expresion postfix: {postfix}")
         
         stack = []
         for symbol in postfix:
@@ -444,21 +443,27 @@ def main():
     
     try:
         print("\n" + "="*50)
-        print("PASO 1: Construccion del AFN (Thompson)")
+        print("PASO 1: Regex a Postfix (Shunting Yard)")
+        print("="*50)
+        postfix = automata.regex_to_postfix(regex)
+        print("Expresión resultante (Postfix):", postfix)
+
+        print("\n" + "="*50)
+        print("PASO 2: Construccion del AFN (Thompson)")
         print("="*50)
         afn = automata.regex_to_afn(regex)
         automata.save_automaton_to_file(afn, "afn.txt", "AFN")
         print("AFN guardado en 'afn.txt'")
         
         print("\n" + "="*50)
-        print("PASO 2: Conversion AFN a AFD (Subconjuntos)")
+        print("PASO 3: Conversion AFN a AFD (Subconjuntos)")
         print("="*50)
         afd = automata.afn_to_afd(afn)
         automata.save_automaton_to_file(afd, "afd.txt", "AFD")
         print("AFD guardado en 'afd.txt'")
         
         print("\n" + "="*50)
-        print("PASO 3: Visualizacion")
+        print("PASO 4: Visualizacion")
         print("="*50)
         automata.visualize_afn(afn, "afn_graph")
         automata.visualize_afd(afd, "afd_graph")

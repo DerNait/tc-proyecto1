@@ -1,6 +1,6 @@
 === AFD ===
-ESTADOS = {0, 1, 2}
+ESTADOS = {q0, q1, q2, q3, q4, q5, q6}
 SIMBOLOS = {a, b}
-INICIO = {0}
-ACEPTACION = {0, 1, 2}
-TRANSICIONES = {(0, a, 1), (1, a, 1), (1, b, 2), (2, a, 1)}
+INICIO = {q0}
+ACEPTACION = {q4, q5, q6}
+TRANSICIONES = {(q0, a, q1), (q0, b, q2), (q1, b, q3), (q2, a, q1), (q2, b, q2), (q3, b, q4), (q4, a, q5), (q4, b, q6), (q5, a, q5), (q5, b, q6), (q6, a, q5), (q6, b, q6)}
