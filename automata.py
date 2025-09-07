@@ -1,6 +1,7 @@
 import graphviz
 from collections import deque
 import json
+import os
 
 class State:
     def __init__(self, state_id):
@@ -35,6 +36,26 @@ class AFD:
         if from_state not in self.transitions:
             self.transitions[from_state] = {}
         self.transitions[from_state][symbol] = to_state
+
+    def simulate(self, input_str):
+        """Simula la cadena sobre el AFD. Devuelve True si es aceptada, False en caso contrario."""
+        # Empty automaton or no start state => reject
+        if self.start_state is None:
+            return False
+
+        current = self.start_state
+        # Empty string: accept if start state is final
+        if input_str == "":
+            return current in self.final_states
+
+        for ch in input_str:
+            if current not in self.transitions:
+                return False
+            if ch not in self.transitions[current]:
+                return False
+            current = self.transitions[current][ch]
+
+        return current in self.final_states
 
 class Automata:
     def __init__(self):
@@ -473,6 +494,44 @@ def main():
         print("- afd.txt (descripcion del AFD)")
         print("- afn_graph.png (visualizacion del AFN)")
         print("- afd_graph.png (visualizacion del AFD)")
+        # --- Simulaciones ---
+        sim_file = "simulations.txt"
+        simulations = []
+        if os.path.exists(sim_file):
+            print(f"Leyendo simulaciones desde '{sim_file}'...")
+            with open(sim_file, 'r', encoding='utf-8') as sf:
+                for line in sf:
+                    s = line.strip()
+                    if s == '':
+                        continue
+                    simulations.append(s)
+        else:
+            print("No se encontró 'simulations.txt'. Puedes ingresar cadenas manualmente (una por línea). Termina con una línea vacía.")
+            while True:
+                try:
+                    s = input()
+                except EOFError:
+                    break
+                if s == "":
+                    break
+                simulations.append(s)
+
+        results = []
+        for s in simulations:
+            accepted = afd.simulate(s)
+            results.append((s, accepted))
+
+        # Guardar resultados en afd_output.txt
+        out_file = "afd_output.txt"
+        with open(out_file, 'w', encoding='utf-8') as of:
+            of.write(f"ESTADO INICIAL = q{afd.start_state}\n")
+            of.write(f"ESTADOS ACEPTACION = {{{', '.join(f'q{st}' for st in sorted(afd.final_states))}}}\n")
+            of.write("RESULTADOS = {\n")
+            for s, acc in results:
+                of.write(f"  ('{s}', {'ACEPTADA' if acc else 'RECHAZADA'})\n")
+            of.write("}\n")
+
+        print(f"Resultados de simulacion guardados en '{out_file}'")
         
     except Exception as e:
         print(f"\nError: {e}")
