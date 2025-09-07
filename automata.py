@@ -2,6 +2,7 @@ import graphviz
 from collections import deque
 import json
 import os
+from copy import deepcopy
 
 class State:
     def __init__(self, state_id):
@@ -456,6 +457,137 @@ class Automata:
         except Exception as e:
             print(f"Error al generar AFD: {e}")
 
+    def minimize_afd(self, afd: AFD, keep_trap: bool = False) -> AFD:
+        """Minimiza un AFD usando Hopcroft. Si keep_trap=False, intenta remover trampa al final."""
+        afd_tot = deepcopy(afd)
+        Q = set(afd_tot.states)
+        F = set(afd_tot.final_states)
+        A = set(afd_tot.alphabet)
+        delta = afd_tot.transitions
+
+        if not Q:
+            min_dfa = AFD()
+            min_dfa.alphabet = set(A)
+            return min_dfa
+
+        nonF = Q - F
+        P = []
+        if F: P.append(F)
+        if nonF: P.append(nonF)
+
+        W = []
+        if F and nonF: W.append(F if len(F) <= len(nonF) else nonF)
+        elif F: W.append(F)
+        elif nonF: W.append(nonF)
+
+        reverse_delta = {c: {} for c in A}
+        for q in Q:
+            for c in A:
+                t = delta.get(q, {}).get(c, None)
+                if t is None:
+                    continue
+                reverse_delta[c].setdefault(t, set()).add(q)
+
+        while W:
+            A_block = W.pop()
+            for c in A:
+                X = set()
+                for t in A_block:
+                    if t in reverse_delta[c]:
+                        X |= reverse_delta[c][t]
+                if not X:
+                    continue
+                new_P = []
+                for Y in P:
+                    inter, diff = Y & X, Y - X
+                    if inter and diff:
+                        new_P += [inter, diff]
+                        if Y in W:
+                            W.remove(Y); W += [inter, diff]
+                        else:
+                            W.append(inter if len(inter) <= len(diff) else diff)
+                    else:
+                        new_P.append(Y)
+                P = new_P
+
+        block_id = {}
+        for i, block in enumerate(P):
+            for s in block:
+                block_id[s] = i
+
+        min_dfa = AFD()
+        min_dfa.alphabet = set(A)
+        min_dfa.states = set(range(len(P)))
+        min_dfa.start_state = block_id[afd_tot.start_state]
+        min_dfa.final_states = {block_id[s] for s in F}
+
+        for i, block in enumerate(P):
+            rep = next(iter(block))
+            for c in A:
+                to_rep = delta.get(rep, {}).get(c, None)
+                if to_rep is None:
+                    continue
+                j = block_id[to_rep]
+                min_dfa.add_transition(i, c, j)
+
+        self._remove_unreachable_states(min_dfa)
+
+        if not keep_trap:
+            self._remove_dead_trap(min_dfa)
+
+        return min_dfa
+    
+    def _remove_unreachable_states(self, afd: AFD):
+        if afd.start_state is None:
+            return
+        reachable = set()
+        stack = [afd.start_state]
+        while stack:
+            s = stack.pop()
+            if s in reachable: 
+                continue
+            reachable.add(s)
+            for a in afd.alphabet:
+                t = afd.transitions.get(s, {}).get(a, None)
+                if t is not None and t not in reachable:
+                    stack.append(t)
+        # filtrar
+        afd.states = afd.states & reachable
+        afd.final_states = afd.final_states & reachable
+        afd.transitions = {s: {a: t for a, t in trans.items() if t in afd.states}
+                        for s, trans in afd.transitions.items() if s in afd.states}
+
+    def _detect_trap_state(self, afd: AFD):
+            for s in afd.states:
+                if s in afd.final_states:
+                    continue
+                # trampa = no-aceptación y todas las salidas regresan a sí mismo
+                is_trap = True
+                for a in afd.alphabet:
+                    t = afd.transitions.get(s, {}).get(a, None)
+                    if t != s:
+                        is_trap = False
+                        break
+                if is_trap:
+                    return s
+            return None
+
+    def _remove_dead_trap(self, afd: AFD):
+            trap = self._detect_trap_state(afd)
+            if trap is None or trap == afd.start_state:
+                return
+            # quitar referencias al trap y el estado
+            for s in list(afd.transitions.keys()):
+                for a in list(afd.transitions[s].keys()):
+                    if afd.transitions[s][a] == trap:
+                        del afd.transitions[s][a]
+                if not afd.transitions[s]:
+                    del afd.transitions[s]
+            if trap in afd.states:
+                afd.states.remove(trap)
+            if trap in afd.final_states:
+                afd.final_states.remove(trap)
+
 def main():
     automata = Automata()
     
@@ -489,12 +621,26 @@ def main():
         automata.visualize_afn(afn, "afn_graph")
         automata.visualize_afd(afd, "afd_graph")
         
+        print("\n" + "="*50)
+        print("PASO 5: Minimizacion del AFD (Hopcroft)")
+        print("="*50)
+        afd_min = automata.minimize_afd(afd)
+        automata.save_automaton_to_file(afd_min, "afd_min.txt", "AFD")
+        print("AFD minimizado guardado en 'afd_min.txt'")
+
+        print("\n" + "="*50)
+        print("PASO 6: Visualizacion del AFD minimizado")
+        print("="*50)
+        automata.visualize_afd(afd_min, "afd_min_graph")
+
         print("\nArchivos generados:")
         print("- afn.txt (descripcion del AFN)")
         print("- afd.txt (descripcion del AFD)")
+        print("- afd_min.txt (descripcion del AFD minimizado)")
         print("- afn_graph.png (visualizacion del AFN)")
         print("- afd_graph.png (visualizacion del AFD)")
-        # --- Simulaciones ---
+        print("- afd_min_graph.png (visualizacion del AFD minimizado)")
+
         sim_file = "simulations.txt"
         simulations = []
         if os.path.exists(sim_file):
@@ -521,7 +667,6 @@ def main():
             accepted = afd.simulate(s)
             results.append((s, accepted))
 
-        # Guardar resultados en afd_output.txt
         out_file = "afd_output.txt"
         with open(out_file, 'w', encoding='utf-8') as of:
             of.write(f"ESTADO INICIAL = q{afd.start_state}\n")
