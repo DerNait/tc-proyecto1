@@ -41,12 +41,10 @@ class AFD:
 
     def simulate(self, input_str):
         """Simula la cadena sobre el AFD. Devuelve True si es aceptada, False en caso contrario."""
-        # Empty automaton or no start state => reject
         if self.start_state is None:
             return False
 
         current = self.start_state
-        # Empty string: accept if start state is final
         if input_str == "":
             return current in self.final_states
 
@@ -58,82 +56,6 @@ class AFD:
             current = self.transitions[current][ch]
 
         return current in self.final_states
-
-    def minimize(self):
-        """Minimiza el AFD por particiones y devuelve (min_afd, classes)
-        where classes is a list of frozensets of original states representing each partition.
-        """
-        # Initial partition: finals and non-finals
-        finals = set(self.final_states)
-        non_finals = set(self.states) - finals
-
-        P = []
-        if finals:
-            P.append(set(finals))
-        if non_finals:
-            P.append(set(non_finals))
-
-        if not P:
-            return self, [frozenset()]
-
-        alphabet = sorted(self.alphabet)
-
-        # Helper to get group index
-        def get_group_index(state, groups):
-            for i, g in enumerate(groups):
-                if state in g:
-                    return i
-            return None
-
-        changed = True
-        while changed:
-            changed = False
-            newP = []
-            for group in P:
-                # split group by transition signatures
-                sig_map = {}
-                for s in group:
-                    sig = []
-                    for a in alphabet:
-                        tgt = None
-                        if s in self.transitions and a in self.transitions[s]:
-                            tgt = self.transitions[s][a]
-                        idx = get_group_index(tgt, P) if tgt is not None else None
-                        sig.append(idx)
-                    sig = tuple(sig)
-                    sig_map.setdefault(sig, set()).add(s)
-
-                if len(sig_map) == 1:
-                    newP.append(group)
-                else:
-                    changed = True
-                    for subset in sig_map.values():
-                        newP.append(subset)
-            P = newP
-
-        # Build minimized AFD
-        mapping = {s: i for i, g in enumerate(P) for s in g}
-        min_afd = AFD()
-        for i in range(len(P)):
-            min_afd.states.add(i)
-        min_afd.alphabet = set(self.alphabet)
-        min_afd.start_state = mapping.get(self.start_state)
-        for i, g in enumerate(P):
-            if any(s in finals for s in g):
-                min_afd.final_states.add(i)
-
-        # Transitions: pick representative from each partition
-        for i, g in enumerate(P):
-            rep = next(iter(g))
-            for a in alphabet:
-                if rep in self.transitions and a in self.transitions[rep]:
-                    tgt = self.transitions[rep][a]
-                    tgt_group = mapping.get(tgt)
-                    if tgt_group is not None:
-                        min_afd.add_transition(i, a, tgt_group)
-
-        classes = [frozenset(g) for g in P]
-        return min_afd, classes
 
     def trace_derivation(self, input_str, classes=None):
         """Genera una derivacion paso a paso usando el AFD actual. Si se pasa 'classes',
@@ -761,7 +683,6 @@ class Automata:
                 t = afd.transitions.get(s, {}).get(a, None)
                 if t is not None and t not in reachable:
                     stack.append(t)
-        # filtrar
         afd.states = afd.states & reachable
         afd.final_states = afd.final_states & reachable
         afd.transitions = {s: {a: t for a, t in trans.items() if t in afd.states}
@@ -771,7 +692,6 @@ class Automata:
             for s in afd.states:
                 if s in afd.final_states:
                     continue
-                # trampa = no-aceptación y todas las salidas regresan a sí mismo
                 is_trap = True
                 for a in afd.alphabet:
                     t = afd.transitions.get(s, {}).get(a, None)
@@ -786,7 +706,6 @@ class Automata:
             trap = self._detect_trap_state(afd)
             if trap is None or trap == afd.start_state:
                 return
-            # quitar referencias al trap y el estado
             for s in list(afd.transitions.keys()):
                 for a in list(afd.transitions[s].keys()):
                     if afd.transitions[s][a] == trap:
@@ -851,7 +770,9 @@ def main():
         print("- afd_graph.png (visualizacion del AFD)")
         print("- afd_min_graph.png (visualizacion del AFD minimizado)")
 
-        # Interactively read strings to simulate and show derivations step-by-step
+        print("\n" + "="*50)
+        print("SIMULACIONES")
+        print("="*50)
         print("\nIngrese las cadenas a simular (una por línea). Deje línea vacía para terminar.")
         simulations = []
         while True:
@@ -864,12 +785,10 @@ def main():
             simulations.append(s)
 
         results = []
-        # Use the Hopcroft-minimized AFD and its classes for all simulations
         for s in simulations:
             accepted, steps = afd_min.trace_derivation(s, classes=afd_min_classes)
             results.append((s, accepted, steps))
 
-            # Print derivation step-by-step to console
             print(f"\nCadena: '{s}' -> {'ACEPTADA' if accepted else 'RECHAZADA'}")
             print("Clases de estados (minimizado):")
             for i, c in enumerate(afd_min_classes):
@@ -884,7 +803,6 @@ def main():
                 else:
                     print(f"  C{frm} --{sym}--> C{to} (contiene: {{{', '.join(str(st) for st in sorted(afd_min_classes[to]))}}})")
 
-        # Summary on console
         print("\nResumen de simulaciones:")
         for s, acc, _ in results:
             print(f"  '{s}': {'ACEPTADA' if acc else 'RECHAZADA'}")
