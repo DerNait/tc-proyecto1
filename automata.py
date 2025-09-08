@@ -367,43 +367,66 @@ class Automata:
         
         return afd
     
-    def save_automaton_to_file(self, automaton, filename, automaton_type="AFD"):
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f"=== {automaton_type} ===\n")
-            
-            if automaton_type == "AFN":
-                states_ids = sorted([s.id for s in automaton.states])
-                f.write(f"ESTADOS = {{{', '.join(map(str, states_ids))}}}\n")
-                f.write(f"SIMBOLOS = {{{', '.join(sorted(automaton.alphabet))}}}\n")
-                f.write(f"INICIO = {{{automaton.start_state.id}}}\n")
-                
-                final_states = [s.id for s in automaton.states if s.is_final]
-                f.write(f"ACEPTACION = {{{', '.join(map(str, final_states))}}}\n")
-                
-                f.write("TRANSICIONES = {")
-                transitions = []
-                for state in automaton.states:
-                    for symbol, targets in state.transitions.items():
-                        for target in targets:
-                            transitions.append(f"({state.id}, {symbol}, {target.id})")
-                    for target in state.epsilon_transitions:
-                        transitions.append(f"({state.id}, ε, {target.id})")
-                f.write(', '.join(transitions))
-                f.write("}\n")
-            else:
-                f.write(f"ESTADOS = {{{', '.join(f'q{s}' for s in sorted(automaton.states))}}}\n")
-                f.write(f"SIMBOLOS = {{{', '.join(sorted(automaton.alphabet))}}}\n")
-                f.write(f"INICIO = {{q{automaton.start_state}}}\n")
-                f.write(f"ACEPTACION = {{{', '.join(f'q{s}' for s in sorted(automaton.final_states))}}}\n")
-                
-                f.write("TRANSICIONES = {")
-                transitions = []
-                for from_state in sorted(automaton.transitions.keys()):
-                    for symbol in sorted(automaton.transitions[from_state].keys()):
-                        to_state = automaton.transitions[from_state][symbol]
-                        transitions.append(f"(q{from_state}, {symbol}, q{to_state})")
-                f.write(', '.join(transitions))
-                f.write("}\n")
+    def save_automaton_to_json(self, automaton, filename, automaton_type="AFD"):
+        """
+        Guarda AFN/AFD como un JSON cuya *carga útil* son strings en el
+        formato visual pedido (headers por línea y elementos en una sola línea):
+        - ESTADOS = {0, 1, ..., n}
+        - SIMBOLOS = {a, b, c, ..., z}
+        - INICIO = {0}
+        - ACEPTACION = {0, 1, ..., n}
+        - TRANSICIONES = {(0, a, 1), (0, b, 2), (3, b, n), ...}
+
+        Nota: Para AFN, se incluyen transiciones ε como (i, ε, j).
+        """
+        def braced(items):
+            return "{%s}" % ", ".join(items)
+
+        if automaton_type == "AFN":
+            estados = sorted(s.id for s in automaton.states)
+            simbolos = sorted(list(automaton.alphabet))
+            inicio = automaton.start_state.id
+            aceptacion = sorted(s.id for s in automaton.states if s.is_final)
+
+            trans_list = []
+            for s in automaton.states:
+                for sym, targets in s.transitions.items():
+                    for t in targets:
+                        trans_list.append((s.id, sym, t.id))
+                for t in s.epsilon_transitions:
+                    trans_list.append((s.id, "ε", t.id))
+
+            trans_list.sort(key=lambda x: (x[0], str(x[1]), x[2]))
+
+        else:
+            estados = sorted(list(automaton.states))
+            simbolos = sorted(list(automaton.alphabet))
+            inicio = automaton.start_state
+            aceptacion = sorted(list(automaton.final_states))
+
+            trans_list = []
+            for from_state in sorted(automaton.transitions.keys()):
+                for sym in sorted(automaton.transitions[from_state].keys()):
+                    to_state = automaton.transitions[from_state][sym]
+                    trans_list.append((from_state, sym, to_state))
+
+        estados_str = braced([str(s) for s in estados])
+        simbolos_str = braced(simbolos)
+        inicio_str = braced([str(inicio)])
+        aceptacion_str = braced([str(s) for s in aceptacion])
+        transiciones_str = "{%s}" % ", ".join(f"({i}, {a}, {j})" for i, a, j in trans_list)
+
+        payload = {
+            "ESTADOS": estados_str,
+            "SIMBOLOS": simbolos_str,
+            "INICIO": inicio_str,
+            "ACEPTACION": aceptacion_str,
+            "TRANSICIONES": transiciones_str,
+        }
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
     
     def visualize_afn(self, afn, filename="afn_graph"):
         dot = graphviz.Digraph(comment='AFN', format='png')
@@ -605,15 +628,15 @@ def main():
         print("PASO 2: Construccion del AFN (Thompson)")
         print("="*50)
         afn = automata.regex_to_afn(regex)
-        automata.save_automaton_to_file(afn, "afn.txt", "AFN")
-        print("AFN guardado en 'afn.txt'")
+        automata.save_automaton_to_json(afn, "afn.json", "AFN")
+        print("AFN guardado en 'afn.json'")
         
         print("\n" + "="*50)
         print("PASO 3: Conversion AFN a AFD (Subconjuntos)")
         print("="*50)
         afd = automata.afn_to_afd(afn)
-        automata.save_automaton_to_file(afd, "afd.txt", "AFD")
-        print("AFD guardado en 'afd.txt'")
+        automata.save_automaton_to_json(afd, "afd.json", "AFD")
+        print("AFD guardado en 'afd.json'")
         
         print("\n" + "="*50)
         print("PASO 4: Visualizacion")
@@ -625,8 +648,8 @@ def main():
         print("PASO 5: Minimizacion del AFD (Hopcroft)")
         print("="*50)
         afd_min = automata.minimize_afd(afd)
-        automata.save_automaton_to_file(afd_min, "afd_min.txt", "AFD")
-        print("AFD minimizado guardado en 'afd_min.txt'")
+        automata.save_automaton_to_json(afd_min, "afd_min.json", "AFD")
+        print("AFD minimizado guardado en 'afd_min.json'")
 
         print("\n" + "="*50)
         print("PASO 6: Visualizacion del AFD minimizado")
@@ -634,9 +657,9 @@ def main():
         automata.visualize_afd(afd_min, "afd_min_graph")
 
         print("\nArchivos generados:")
-        print("- afn.txt (descripcion del AFN)")
-        print("- afd.txt (descripcion del AFD)")
-        print("- afd_min.txt (descripcion del AFD minimizado)")
+        print("- afn.json (descripcion del AFN)")
+        print("- afd.json (descripcion del AFD)")
+        print("- afd_min.json (descripcion del AFD minimizado)")
         print("- afn_graph.png (visualizacion del AFN)")
         print("- afd_graph.png (visualizacion del AFD)")
         print("- afd_min_graph.png (visualizacion del AFD minimizado)")
@@ -667,7 +690,7 @@ def main():
             accepted = afd.simulate(s)
             results.append((s, accepted))
 
-        out_file = "afd_output.txt"
+        out_file = "afd_output.json"
         with open(out_file, 'w', encoding='utf-8') as of:
             of.write(f"ESTADO INICIAL = q{afd.start_state}\n")
             of.write(f"ESTADOS ACEPTACION = {{{', '.join(f'q{st}' for st in sorted(afd.final_states))}}}\n")
