@@ -1,4 +1,5 @@
 import graphviz
+HAS_GRAPHVIZ = True
 from collections import deque
 import json
 import os
@@ -57,6 +58,105 @@ class AFD:
             current = self.transitions[current][ch]
 
         return current in self.final_states
+
+    def minimize(self):
+        """Minimiza el AFD por particiones y devuelve (min_afd, classes)
+        where classes is a list of frozensets of original states representing each partition.
+        """
+        # Initial partition: finals and non-finals
+        finals = set(self.final_states)
+        non_finals = set(self.states) - finals
+
+        P = []
+        if finals:
+            P.append(set(finals))
+        if non_finals:
+            P.append(set(non_finals))
+
+        if not P:
+            return self, [frozenset()]
+
+        alphabet = sorted(self.alphabet)
+
+        # Helper to get group index
+        def get_group_index(state, groups):
+            for i, g in enumerate(groups):
+                if state in g:
+                    return i
+            return None
+
+        changed = True
+        while changed:
+            changed = False
+            newP = []
+            for group in P:
+                # split group by transition signatures
+                sig_map = {}
+                for s in group:
+                    sig = []
+                    for a in alphabet:
+                        tgt = None
+                        if s in self.transitions and a in self.transitions[s]:
+                            tgt = self.transitions[s][a]
+                        idx = get_group_index(tgt, P) if tgt is not None else None
+                        sig.append(idx)
+                    sig = tuple(sig)
+                    sig_map.setdefault(sig, set()).add(s)
+
+                if len(sig_map) == 1:
+                    newP.append(group)
+                else:
+                    changed = True
+                    for subset in sig_map.values():
+                        newP.append(subset)
+            P = newP
+
+        # Build minimized AFD
+        mapping = {s: i for i, g in enumerate(P) for s in g}
+        min_afd = AFD()
+        for i in range(len(P)):
+            min_afd.states.add(i)
+        min_afd.alphabet = set(self.alphabet)
+        min_afd.start_state = mapping.get(self.start_state)
+        for i, g in enumerate(P):
+            if any(s in finals for s in g):
+                min_afd.final_states.add(i)
+
+        # Transitions: pick representative from each partition
+        for i, g in enumerate(P):
+            rep = next(iter(g))
+            for a in alphabet:
+                if rep in self.transitions and a in self.transitions[rep]:
+                    tgt = self.transitions[rep][a]
+                    tgt_group = mapping.get(tgt)
+                    if tgt_group is not None:
+                        min_afd.add_transition(i, a, tgt_group)
+
+        classes = [frozenset(g) for g in P]
+        return min_afd, classes
+
+    def trace_derivation(self, input_str, classes=None):
+        """Genera una derivacion paso a paso usando el AFD actual. Si se pasa 'classes',
+        asume que los estados son clases de minimizacion y las imprime con contenido original.
+        Retorna (accepted, steps) donde steps es lista de tuples (from, symbol, to).
+        """
+        steps = []
+        if self.start_state is None:
+            return False, steps
+
+        current = self.start_state
+        # initial marker
+        steps.append((current, None, None))
+
+        for ch in input_str:
+            if current not in self.transitions or ch not in self.transitions[current]:
+                steps.append((current, ch, None))
+                return False, steps
+            nxt = self.transitions[current][ch]
+            steps.append((current, ch, nxt))
+            current = nxt
+
+        return (current in self.final_states), steps
 
 class Automata:
     def __init__(self):
@@ -429,6 +529,9 @@ class Automata:
 
     
     def visualize_afn(self, afn, filename="afn_graph"):
+        if not HAS_GRAPHVIZ:
+            print("graphviz no disponible: se omite la visualizacion del AFN")
+            return
         dot = graphviz.Digraph(comment='AFN', format='png')
         dot.attr(rankdir='LR', size='10,8')
         dot.attr('node', shape='circle', style='filled', fillcolor='lightblue')
@@ -456,6 +559,9 @@ class Automata:
             print(f"Error al generar AFN: {e}")
     
     def visualize_afd(self, afd, filename="afd_graph"):
+        if not HAS_GRAPHVIZ:
+            print("graphviz no disponible: se omite la visualizacion del AFD")
+            return
         dot = graphviz.Digraph(comment='AFD', format='png')
         dot.attr(rankdir='LR', size='10,8')
         dot.attr('node', shape='circle', style='filled', fillcolor='lightblue')
@@ -558,7 +664,8 @@ class Automata:
         if not keep_trap:
             self._remove_dead_trap(min_dfa)
 
-        return min_dfa
+        classes = [frozenset(block) for block in P]
+        return min_dfa, classes
     
     def _remove_unreachable_states(self, afd: AFD):
         if afd.start_state is None:
@@ -647,7 +754,7 @@ def main():
         print("\n" + "="*50)
         print("PASO 5: Minimizacion del AFD (Hopcroft)")
         print("="*50)
-        afd_min = automata.minimize_afd(afd)
+        afd_min, afd_min_classes = automata.minimize_afd(afd)
         automata.save_automaton_to_json(afd_min, "afd_min.json", "AFD")
         print("AFD minimizado guardado en 'afd_min.json'")
 
@@ -664,42 +771,43 @@ def main():
         print("- afd_graph.png (visualizacion del AFD)")
         print("- afd_min_graph.png (visualizacion del AFD minimizado)")
 
-        sim_file = "simulations.txt"
+        # Interactively read strings to simulate and show derivations step-by-step
+        print("\nIngrese las cadenas a simular (una por línea). Deje línea vacía para terminar.")
         simulations = []
-        if os.path.exists(sim_file):
-            print(f"Leyendo simulaciones desde '{sim_file}'...")
-            with open(sim_file, 'r', encoding='utf-8') as sf:
-                for line in sf:
-                    s = line.strip()
-                    if s == '':
-                        continue
-                    simulations.append(s)
-        else:
-            print("No se encontró 'simulations.txt'. Puedes ingresar cadenas manualmente (una por línea). Termina con una línea vacía.")
-            while True:
-                try:
-                    s = input()
-                except EOFError:
-                    break
-                if s == "":
-                    break
-                simulations.append(s)
+        while True:
+            try:
+                s = input("cadena> ").strip()
+            except EOFError:
+                break
+            if s == "":
+                break
+            simulations.append(s)
 
         results = []
+        # Use the Hopcroft-minimized AFD and its classes for all simulations
         for s in simulations:
-            accepted = afd.simulate(s)
-            results.append((s, accepted))
+            accepted, steps = afd_min.trace_derivation(s, classes=afd_min_classes)
+            results.append((s, accepted, steps))
 
-        out_file = "afd_output.json"
-        with open(out_file, 'w', encoding='utf-8') as of:
-            of.write(f"ESTADO INICIAL = q{afd.start_state}\n")
-            of.write(f"ESTADOS ACEPTACION = {{{', '.join(f'q{st}' for st in sorted(afd.final_states))}}}\n")
-            of.write("RESULTADOS = {\n")
-            for s, acc in results:
-                of.write(f"  ('{s}', {'ACEPTADA' if acc else 'RECHAZADA'})\n")
-            of.write("}\n")
+            # Print derivation step-by-step to console
+            print(f"\nCadena: '{s}' -> {'ACEPTADA' if accepted else 'RECHAZADA'}")
+            print("Clases de estados (minimizado):")
+            for i, c in enumerate(afd_min_classes):
+                print(f"  C{i} = {{{', '.join(str(st) for st in sorted(c))}}}")
+            print("Derivacion:")
+            for step in steps:
+                frm, sym, to = step
+                if sym is None:
+                    print(f"  Estado inicial: C{frm} (contiene: {{{', '.join(str(st) for st in sorted(afd_min_classes[frm]))}}})")
+                elif to is None:
+                    print(f"  Desde C{frm} --{sym}--> (no definido) => RECHAZADA")
+                else:
+                    print(f"  C{frm} --{sym}--> C{to} (contiene: {{{', '.join(str(st) for st in sorted(afd_min_classes[to]))}}})")
 
-        print(f"Resultados de simulacion guardados en '{out_file}'")
+        # Summary on console
+        print("\nResumen de simulaciones:")
+        for s, acc, _ in results:
+            print(f"  '{s}': {'ACEPTADA' if acc else 'RECHAZADA'}")
         
     except Exception as e:
         print(f"\nError: {e}")
