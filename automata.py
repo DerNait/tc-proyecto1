@@ -4,6 +4,13 @@ from collections import deque
 import json
 import os
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import List, Optional, Set, Union
+
+@dataclass(frozen=True)
+class Token:
+    type: str
+    value: Optional[Union[str, Set[str]]] = None
 
 class State:
     def __init__(self, state_id):
@@ -83,6 +90,77 @@ class AFD:
 class Automata:
     def __init__(self):
         self.state_counter = 0
+
+    def _expand_range(self, a: str, b: str) -> List[str]:
+        return [chr(x) for x in range(ord(a), ord(b) + 1)]
+
+    def tokenize(self, regex: str) -> List[Token]:
+        i, n = 0, len(regex)
+        out: List[Token] = []
+
+        while i < n:
+            c = regex[i]
+
+            if c == '\\':
+                if i + 1 >= n:
+                    raise ValueError("Escape al final del patrón")
+                out.append(Token('SYMBOL', regex[i+1]))
+                i += 2
+                continue
+
+            if c == '[':
+                i += 1
+                chars: Set[str] = set()
+                if i >= n:
+                    raise ValueError("Clase sin cerrar '['")
+                while i < n and regex[i] != ']':
+                    if regex[i] == '\\':
+                        if i + 1 >= n:
+                            raise ValueError("Escape en clase sin siguiente char")
+                        chars.add(regex[i+1])
+                        i += 2
+                    elif i + 2 < n and regex[i+1] == '-' and regex[i+2] != ']':
+                        chars.update(self._expand_range(regex[i], regex[i+2]))
+                        i += 3
+                    else:
+                        chars.add(regex[i])
+                        i += 1
+                if i >= n or regex[i] != ']':
+                    raise ValueError("Clase sin ']' de cierre")
+                out.append(Token('CHARCLASS', frozenset(chars)))
+                i += 1
+                continue
+
+            if c == '(':
+                out.append(Token('LPAREN'))
+            elif c == ')':
+                out.append(Token('RPAREN'))
+            elif c == '|':
+                out.append(Token('ALT'))
+            elif c == '*':
+                out.append(Token('STAR'))
+            elif c == '+':
+                out.append(Token('PLUS'))
+            elif c == '?':
+                out.append(Token('QMARK'))
+            else:
+                out.append(Token('SYMBOL', c))
+            i += 1
+
+        return out
+    
+    def _needs_concat(self, left: Token, right: Token) -> bool:
+        left_is_atom  = left.type in ('SYMBOL','CHARCLASS','RPAREN') or left.type in ('STAR','PLUS','QMARK')
+        right_is_atom = right.type in ('SYMBOL','CHARCLASS','LPAREN')
+        return left_is_atom and right_is_atom
+
+    def insert_concat(self, tokens: List[Token]) -> List[Token]:
+        out: List[Token] = []
+        for i, t in enumerate(tokens):
+            if i > 0 and self._needs_concat(out[-1], t):
+                out.append(Token('CONCAT'))
+            out.append(t)
+        return out
     
     def get_new_state_id(self):
         self.state_counter += 1
@@ -100,39 +178,68 @@ class Automata:
             prev = c
         return result
 
-    def get_precedence(self, op):
-        precedences = {'.': 2, '|': 1}
-        return precedences.get(op, 0)
+    def get_prec(self, t: Token) -> int:
+        if t.type == 'CONCAT': return 2
+        if t.type == 'ALT':    return 1
+        return 0
 
-    def regex_to_postfix(self, expression):
-        expression = self.add_concatenation_symbols(expression)
-        output = []
-        stack = []
-        
-        postfix_quantifiers = {'*', '+', '?'}
-        binary_ops = {'.', '|'}
+    def regex_to_postfix_tokens(self, regex: str) -> List[Token]:
+        toks = self.tokenize(regex)
+        toks = self.insert_concat(toks)
+        out: List[Token] = []
+        stack: List[Token] = []
 
-        for token in expression:
-            if token == '(':
-                stack.append(token)
-            elif token == ')':
-                while stack and stack[-1] != '(':
-                    output.append(stack.pop())
-                if stack:
-                    stack.pop()
-            elif token in postfix_quantifiers:
-                output.append(token)
-            elif token in binary_ops:
-                while stack and stack[-1] != '(' and self.get_precedence(stack[-1]) >= self.get_precedence(token):
-                    output.append(stack.pop())
-                stack.append(token)
+        for t in toks:
+            tt = t.type
+            if tt in ('SYMBOL','CHARCLASS'):
+                out.append(t)
+            elif tt in ('STAR','PLUS','QMARK'):
+                out.append(t)
+            elif tt == 'LPAREN':
+                stack.append(t)
+            elif tt == 'RPAREN':
+                while stack and stack[-1].type != 'LPAREN':
+                    out.append(stack.pop())
+                if not stack:
+                    raise ValueError("Paréntesis desbalanceados")
+                stack.pop()
+            elif tt in ('CONCAT','ALT'):
+                while stack and stack[-1].type != 'LPAREN' and self.get_prec(stack[-1]) >= self.get_prec(t):
+                    out.append(stack.pop())
+                stack.append(t)
             else:
-                output.append(token)
+                raise ValueError(f"Token inesperado: {t}")
 
         while stack:
-            output.append(stack.pop())
+            if stack[-1].type in ('LPAREN','RPAREN'):
+                raise ValueError("Paréntesis desbalanceados al final")
+            out.append(stack.pop())
 
-        return ''.join(output)
+        return out
+
+    def regex_to_postfix(self, expression: str) -> str:
+        toks = self.regex_to_postfix_tokens(expression)
+        pretty = []
+        for t in toks:
+            if t.type == 'SYMBOL':      pretty.append(t.value)
+            elif t.type == 'CHARCLASS': pretty.append('[' + ''.join(sorted(t.value)) + ']')
+            elif t.type == 'STAR':      pretty.append('*')
+            elif t.type == 'PLUS':      pretty.append('+')
+            elif t.type == 'QMARK':     pretty.append('?')
+            elif t.type == 'ALT':       pretty.append('|')
+            elif t.type == 'CONCAT':    pretty.append('.')
+        return ''.join(pretty)
+    
+    def create_basic_afn_set(self, symbols: Set[str]) -> AFN:
+        start = State(self.get_new_state_id())
+        final = State(self.get_new_state_id()); final.is_final = True
+        for sym in symbols:
+            start.transitions.setdefault(sym, []).append(final)
+        afn = AFN(start, final)
+        afn.add_state(start); afn.add_state(final)
+        for sym in symbols:
+            afn.add_symbol(sym)
+        return afn
     
     def create_basic_afn(self, symbol):
         start = State(self.get_new_state_id())
@@ -277,42 +384,34 @@ class Automata:
         return result
     
     def regex_to_afn(self, expression):
-        postfix = self.regex_to_postfix(expression)
-        
-        stack = []
-        for symbol in postfix:
-            if symbol == '.':
-                if len(stack) >= 2:
-                    afn2 = stack.pop()
-                    afn1 = stack.pop()
-                    stack.append(self.concatenate_afn(afn1, afn2))
-            elif symbol == '|':
-                if len(stack) >= 2:
-                    afn2 = stack.pop()
-                    afn1 = stack.pop()
-                    stack.append(self.union_afn(afn1, afn2))
-            elif symbol == '*':
-                if stack:
-                    afn = stack.pop()
-                    stack.append(self.kleene_star_afn(afn))
-            elif symbol == '+':
-                if stack:
-                    afn = stack.pop()
-                    stack.append(self.plus_afn(afn))
-            elif symbol == '?':
-                if stack:
-                    afn = stack.pop()
-                    stack.append(self.question_afn(afn))
+        postfix_tokens = self.regex_to_postfix_tokens(expression)
+        stack: List[AFN] = []
+
+        for tk in postfix_tokens:
+            tt = tk.type
+            if tt == 'SYMBOL':
+                stack.append(self.create_basic_afn(tk.value))
+            elif tt == 'CHARCLASS':
+                stack.append(self.create_basic_afn_set(set(tk.value)))
+            elif tt == 'CONCAT':
+                b = stack.pop(); a = stack.pop()
+                stack.append(self.concatenate_afn(a, b))
+            elif tt == 'ALT':
+                b = stack.pop(); a = stack.pop()
+                stack.append(self.union_afn(a, b))
+            elif tt == 'STAR':
+                a = stack.pop(); stack.append(self.kleene_star_afn(a))
+            elif tt == 'PLUS':
+                a = stack.pop(); stack.append(self.plus_afn(a))
+            elif tt == 'QMARK':
+                a = stack.pop(); stack.append(self.question_afn(a))
             else:
-                if symbol == 'ε' or symbol == 'E':
-                    afn = self.create_epsilon_afn()
-                else:
-                    afn = self.create_basic_afn(symbol)
-                stack.append(afn)
-        
+                raise ValueError(f"Token en postfix no manejado: {tk}")
+
         if len(stack) != 1:
             raise ValueError("Error en la construccion del AFN")
         return stack[0]
+
     
     def epsilon_closure(self, states):
         closure = set(states)
