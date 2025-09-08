@@ -465,6 +465,7 @@ class Automata:
                     afd.add_transition(current_afd_state, symbol, state_mapping[next_closure])
                     print(f"  Transicion: q{current_afd_state} --{symbol}--> q{state_mapping[next_closure]}")
         
+        afd = self._totalize_afd(afd)
         return afd
     
     def save_automaton_to_json(self, automaton, filename, automaton_type="AFD"):
@@ -586,6 +587,85 @@ class Automata:
         except Exception as e:
             print(f"Error al generar AFD: {e}")
 
+    def _totalize_afd(self, afd: AFD) -> AFD:
+        """Asegura que el AFD tenga transición definida para todo (estado, símbolo).
+        Solo crea/usa un estado sumidero si realmente faltan transiciones."""
+        afd_total = deepcopy(afd)
+        if not afd_total.states or not afd_total.alphabet:
+            return afd_total
+
+        missing = False
+        for s in afd_total.states:
+            row = afd_total.transitions.get(s, {})
+            for a in afd_total.alphabet:
+                if a not in row:
+                    missing = True
+                    break
+            if missing:
+                break
+
+        if not missing:
+            return afd_total
+
+        trap = None
+        for s in afd_total.states:
+            is_trap = True
+            for a in afd_total.alphabet:
+                to_s = afd_total.transitions.get(s, {}).get(a)
+                if to_s != s:
+                    is_trap = False
+                    break
+            if is_trap:
+                trap = s
+                break
+
+        if trap is None:
+            trap = (max(afd_total.states) + 1)
+            afd_total.states.add(trap)
+            afd_total.transitions.setdefault(trap, {})
+        for a in afd_total.alphabet:
+            afd_total.transitions[trap][a] = trap
+
+        for s in list(afd_total.states):
+            afd_total.transitions.setdefault(s, {})
+            for a in afd_total.alphabet:
+                if a not in afd_total.transitions[s]:
+                    afd_total.transitions[s][a] = trap
+
+        return afd_total
+    
+    def _prune_unreachable(self, afd: AFD) -> AFD:
+        """Elimina estados inalcanzables desde el estado inicial."""
+        if afd.start_state is None:
+            return deepcopy(afd)
+
+        afd2 = deepcopy(afd)
+        reachable = set()
+        stack = [afd2.start_state]
+        while stack:
+            s = stack.pop()
+            if s in reachable:
+                continue
+            reachable.add(s)
+            for a in afd2.alphabet:
+                t = afd2.transitions.get(s, {}).get(a)
+                if t is not None and t not in reachable:
+                    stack.append(t)
+
+        afd2.states = reachable
+        afd2.final_states &= reachable
+        new_trans = {}
+        for s in reachable:
+            row = afd2.transitions.get(s, {})
+            new_row = {}
+            for a, t in row.items():
+                if t in reachable:
+                    new_row[a] = t
+            if new_row:
+                new_trans[s] = new_row
+        afd2.transitions = new_trans
+        return afd2
+    
     def minimize_afd(self, afd: AFD, keep_trap: bool = False) -> AFD:
         """Minimiza un AFD usando Hopcroft. Si keep_trap=False, intenta remover trampa al final."""
         afd_tot = deepcopy(afd)
